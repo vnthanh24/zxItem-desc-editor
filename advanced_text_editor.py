@@ -47,7 +47,8 @@ class AdvancedTextEditorTool:
         ttk.Button(button_frame, text="📁 Mở File", command=self.open_file).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="💾 Lưu File", command=self.save_file).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="➕ Thêm Item", command=self.add_new_item).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="🔍 Tìm kiếm", command=self.search_item).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="�️ Xóa nhiều Item", command=self.delete_multiple_items).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="�🔍 Tìm kiếm", command=self.search_item).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="🔄 Làm mới", command=self.refresh_all).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="📝 Xem dòng khác", command=self.show_other_lines).pack(side=tk.LEFT, padx=(0, 10))
         
@@ -75,14 +76,15 @@ class AdvancedTextEditorTool:
         search_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
         search_frame.columnconfigure(1, weight=1)
         
-        ttk.Label(search_frame, text="Lọc:").grid(row=0, column=0, padx=(0, 5))
+        ttk.Label(search_frame, text="Tìm:").grid(row=0, column=0, padx=(0, 5))
         self.filter_var = tk.StringVar()
         self.filter_entry = ttk.Entry(search_frame, textvariable=self.filter_var)
         self.filter_entry.grid(row=0, column=1, sticky=(tk.W, tk.E))
         self.filter_var.trace('w', self.filter_items)
         
-        # Treeview cho danh sách items
-        self.tree = ttk.Treeview(list_frame, columns=("ID", "Preview"), show="headings", height=20)
+        
+        # Treeview cho danh sách items với khả năng chọn nhiều item
+        self.tree = ttk.Treeview(list_frame, columns=("ID", "Preview"), show="headings", height=20, selectmode='extended')
         self.tree.heading("ID", text="ID")
         self.tree.heading("Preview", text="Nội dung (preview)")
         self.tree.column("ID", width=80)
@@ -98,6 +100,14 @@ class AdvancedTextEditorTool:
         # Bind events
         self.tree.bind('<<TreeviewSelect>>', self.on_item_select)
         self.tree.bind('<Double-1>', self.on_item_double_click)
+        self.tree.bind('<Button-3>', self.show_context_menu)  # Right click
+        
+        # Tạo context menu
+        self.context_menu = tk.Menu(self.root, tearoff=0)
+        self.context_menu.add_command(label="🗑️ Xóa item đã chọn", command=self.delete_selected_items)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="✅ Chọn tất cả", command=self.select_all_items)
+        self.context_menu.add_command(label="❌ Bỏ chọn tất cả", command=self.deselect_all_items)
         
         # Frame chỉnh sửa (bên phải)
         edit_frame = ttk.LabelFrame(main_frame, text="✏️ Chỉnh sửa nội dung", padding="5")
@@ -174,8 +184,46 @@ class AdvancedTextEditorTool:
         # Biến lưu trữ item đang chỉnh sửa
         self.current_editing_index = -1
         
+        # Thiết lập phím tắt
+        self.setup_keyboard_shortcuts()
+        
         # Update line numbers initially
         self.update_line_numbers()
+    
+    def setup_keyboard_shortcuts(self):
+        """Thiết lập các phím tắt"""
+        # Phím Delete để xóa item đã chọn
+        self.root.bind('<Delete>', self.on_delete_key)
+        self.root.bind('<Control-d>', self.on_delete_key)  # Ctrl+D để xóa
+        
+        # Ctrl+A để chọn tất cả
+        self.root.bind('<Control-a>', self.on_select_all_key)
+        
+        # Escape để bỏ chọn
+        self.root.bind('<Escape>', self.on_escape_key)
+    
+    def on_delete_key(self, event):
+        """Xử lý phím Delete và Ctrl+D"""
+        # Kiểm tra xem focus có đang ở treeview không
+        if self.root.focus_get() == self.tree or self.tree.focus():
+            selected_items = self.tree.selection()
+            if selected_items:
+                self.delete_selected_items()
+        return "break"
+    
+    def on_select_all_key(self, event):
+        """Xử lý Ctrl+A"""
+        # Kiểm tra xem focus có đang ở treeview không
+        if self.root.focus_get() == self.tree or self.tree.focus():
+            self.select_all_items()
+            return "break"
+    
+    def on_escape_key(self, event):
+        """Xử lý phím Escape"""
+        # Nếu đang ở treeview, bỏ chọn tất cả
+        if self.root.focus_get() == self.tree or self.tree.focus():
+            self.deselect_all_items()
+            return "break"
     
     def setup_color_tags(self):
         """Thiết lập các tag màu sắc cho text editor"""
@@ -503,12 +551,20 @@ class AdvancedTextEditorTool:
         selection = self.tree.selection()
         if not selection:
             return
-            
-        # Lấy index của item được chọn
-        item = self.tree.item(selection[0])
-        index = int(item['tags'][0])
         
-        self.load_item_to_editor(index)
+        # Hiển thị số lượng item đã chọn
+        selected_count = len(selection)
+        if selected_count > 1:
+            self.status_label.config(
+                text=f"Đã chọn {selected_count} items", 
+                foreground="blue"
+            )
+        else:
+            # Lấy index của item được chọn
+            item = self.tree.item(selection[0])
+            index = int(item['tags'][0])
+            
+            self.load_item_to_editor(index)
     
     def on_item_double_click(self, event):
         """Xử lý double click - focus vào text editor"""
@@ -989,6 +1045,93 @@ class AdvancedTextEditorTool:
             self.text_editor.delete('1.0', tk.END)
             self.refresh_tree()
             self.status_label.config(text="Đã xóa item", foreground="orange")
+    
+    def delete_multiple_items(self):
+        """Xóa nhiều item từ button"""
+        selected_items = self.tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Cảnh báo", "Chưa chọn item nào để xóa.\nVui lòng chọn một hoặc nhiều item từ danh sách.")
+            return
+        
+        self.delete_selected_items()
+    
+    def delete_selected_items(self):
+        """Xóa các item đã được chọn trong treeview"""
+        selected_items = self.tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Cảnh báo", "Chưa chọn item nào để xóa")
+            return
+        
+        # Lấy thông tin các item sẽ bị xóa
+        items_to_delete = []
+        for selected_item in selected_items:
+            item_data = self.tree.item(selected_item)
+            item_id = item_data['values'][0]
+            items_to_delete.append(item_id)
+        
+        # Hiển thị dialog xác nhận
+        if len(items_to_delete) == 1:
+            message = f"Bạn có chắc muốn xóa item ID: {items_to_delete[0]}?"
+        else:
+            items_list = ", ".join(str(item_id) for item_id in items_to_delete)
+            message = f"Bạn có chắc muốn xóa {len(items_to_delete)} items?\nID: {items_list}"
+        
+        result = messagebox.askyesno("Xác nhận xóa", message)
+        
+        if result:
+            # Xóa các item từ data (xóa theo index giảm dần để tránh lỗi index)
+            indices_to_delete = []
+            for item_id in items_to_delete:
+                for i, data_item in enumerate(self.data):
+                    if str(data_item['id']) == str(item_id):
+                        indices_to_delete.append(i)
+                        break
+            
+            # Sắp xếp indices giảm dần để xóa từ cuối lên đầu
+            indices_to_delete.sort(reverse=True)
+            
+            for index in indices_to_delete:
+                self.data.pop(index)
+            
+            # Reset trạng thái editor nếu item đang chỉnh sửa bị xóa
+            if self.current_editing_index in indices_to_delete:
+                self.current_editing_index = -1
+                self.current_id_label.config(text="")
+                self.color_codes_label.config(text="")
+                self.text_editor.delete('1.0', tk.END)
+            
+            # Refresh tree và hiển thị thông báo
+            self.refresh_tree()
+            count = len(items_to_delete)
+            self.status_label.config(
+                text=f"Đã xóa {count} item{'s' if count > 1 else ''}", 
+                foreground="orange"
+            )
+            self.modified = True
+    
+    def show_context_menu(self, event):
+        """Hiển thị context menu khi click chuột phải"""
+        # Chọn item tại vị trí click nếu chưa được chọn
+        item = self.tree.identify_row(event.y)
+        if item:
+            # Nếu item chưa được chọn, chọn nó
+            if item not in self.tree.selection():
+                self.tree.selection_set(item)
+            
+            # Hiển thị menu
+            try:
+                self.context_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                self.context_menu.grab_release()
+    
+    def select_all_items(self):
+        """Chọn tất cả items trong danh sách"""
+        all_items = self.tree.get_children()
+        self.tree.selection_set(all_items)
+    
+    def deselect_all_items(self):
+        """Bỏ chọn tất cả items"""
+        self.tree.selection_remove(self.tree.selection())
     
     def show_color_picker(self):
         """Hiển thị bảng chọn màu cho text editor chính"""
